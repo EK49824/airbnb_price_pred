@@ -1,0 +1,445 @@
+---
+title: "STAT 1361 Final Project Code"
+author: "Elizabeth Kwee"
+date: "2026-04-21"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r message = FALSE, warning = FALSE}
+library(tidyverse)
+library(regclass) #VIF
+library(leaps) #subset selection
+library(caret) #cross validation
+
+library(glmnet) #ridge and lasso regression
+library(tree) #decision tree
+library(randomForest) #random forest
+```
+
+
+```{r}
+#Read in data
+train = read.csv("df_train.csv", header = T)
+test = read.csv("df_test.csv", header = T)
+
+#View data
+head(train, 5)
+```
+
+##Exploratory Data Analysis
+```{r}
+#Convert categorical variables to numeric
+train.numeric = train
+train.numeric$neighbourhood_cleansed = as.numeric(as.factor(train$neighbourhood_cleansed))
+train.numeric$room_type = as.numeric(as.factor(train$room_type))
+```
+
+#Univariate Analysis
+```{r, message=FALSE, warning=FALSE}
+#Price (target variable)
+ggplot(train, aes(x = price)) +
+  geom_boxplot() +
+  labs(title = "Price boxplot with outliers", x = "Price")
+
+ggplot(train, aes(x = price)) +
+  geom_boxplot(outliers = F) +
+  labs(title = "Price boxplot without outliers", x = "Price")
+
+#Neighbourhood_cleansed
+ggplot(train, aes(x=neighbourhood_cleansed)) +
+  geom_bar(fill="lightblue") +
+  coord_flip() +
+  labs(title = "Bar chart of neighborhoods", x = "Neighborhoods")
+
+#Room type
+ggplot(train, aes(x=room_type)) +
+  geom_bar(fill="lightblue") +
+  labs(title = "Bar chart of room types", x = "Room types")
+
+#Bathrooms
+ggplot(train, aes(x = bathrooms)) +
+  geom_histogram(bins = 8, fill="lightblue", col="black") +
+  labs(title = "Bathrooms histogram", x = "Number of bathrooms")
+
+#Bedrooms
+ggplot(train, aes(x = bedrooms)) +
+  geom_histogram(bins = 15, fill="lightblue", col="black") +
+  labs(title = "Bedrooms histogram", x = "Number of bedrooms")
+
+#Accommodates
+ggplot(train, aes(x = accommodates)) +
+  geom_histogram(bins = 15, fill="lightblue", col="black") +
+  labs(title = "Accommodates histogram", x = "Number of people accommadatable")
+
+#Minimum_nights
+ggplot(train, aes(x = minimum_nights)) +
+  geom_boxplot() +
+  labs(title = "Min nights boxplot", x = "Min nights")
+
+ggplot(train, aes(x = minimum_nights)) +
+  geom_histogram(fill="lightblue", col="black") +
+  labs(title = "Min nights histogram", x = "Min nights")
+
+#Availability_365
+ggplot(train, aes(x = availability_365)) +
+  geom_histogram(bins = 50, fill="lightblue", col="black") +
+  labs(title = "Availability in a year histogram", x = "Days available")
+
+#Number_of_reviews
+ggplot(train, aes(x = number_of_reviews)) +
+  geom_histogram(fill = "lightblue", col = "black") +
+  labs(title ="Number of reviews histogram", x = "Number of reviews")
+
+#Review_scores_rating
+ggplot(train, aes(x = review_scores_rating)) +
+  geom_histogram(fill = "lightblue", col = "black") +
+  labs(title ="Review scores histogram", x = "Scores")
+
+#Review_scores_cleanliness
+ggplot(train, aes(x = review_scores_cleanliness)) +
+  geom_histogram(fill = "lightblue", col = "black") +
+  labs(title ="Review scores cleanliness histogram", x = "Cleanliness")
+
+#Review_scores_location
+ggplot(train, aes(x = review_scores_location)) +
+  geom_histogram(fill = "lightblue", col = "black") +
+  labs(title ="Review scores location histogram", x = "Location")
+
+#Host_is_superhost
+ggplot(train, aes(x = as.factor(host_is_superhost))) +
+  geom_bar(fill = "lightblue") +
+  labs(title ="Host is superhost", x = "Superhost (1) or not (0)")
+
+#Instant_bookable
+ggplot(train, aes(x = as.factor(instant_bookable))) +
+  geom_bar(fill = "lightblue") +
+  labs(title ="Instant bookable", x = "Instant (1) or not (0)")
+
+#Host_identity_verified
+ggplot(train, aes(x = as.factor(host_identity_verified))) +
+  geom_bar(fill = "lightblue") +
+  labs(title ="Host identity verified", x = "Verified (1) or not (0)")
+
+#Calculated_host_listings_count
+ggplot(train, aes(x = calculated_host_listings_count)) +
+  geom_histogram(fill = "lightblue", col = "black") +
+  labs(title ="Number of host listings histogram", x = "Number of listings")
+
+#Dist_to_downtown
+ggplot(train, aes(x = dist_to_downtown)) +
+  geom_histogram(fill = "lightblue", col = "black") +
+  labs(title ="Distance to downtown histogram", x = "Distance (mi)")
+
+```
+
+```{r}
+summary(train$price)
+outlier_values = boxplot.stats(train$price)$out
+length(outlier_values)
+```
+
+##Bivariate analysis
+#Price vs. variables
+```{r}
+for (i in 1:16){
+  plot(train.numeric[,i], train.numeric$price, xlab = colnames(train.numeric)[i], ylab="Price")
+}
+```
+
+
+#Multivariate Analysis
+```{r}
+#Correlation between pairs of variables
+cor(train.numeric)
+
+#Check for potential multicollinearity (none clearly observed)
+full_lm.numeric = lm(price ~ ., data = train.numeric)
+print("VIF Values")
+VIF(full_lm.numeric)
+```
+
+```{r}
+#Influential points
+plot(full_lm.numeric, which=4)
+abline(h = 4/nrow(train.numeric), col="red")
+
+cd = cooks.distance(full_lm.numeric)
+influential.points = which(cd > 4/nrow(train.numeric))
+length(influential.points)
+```
+
+```{r}
+#Analyzing influential points
+sort(cd, decreasing = T)[1:4]
+train[635,]
+train[2139,]
+train[1596,]
+train[334,]
+```
+
+```{r}
+train.delete = train[-c(635, 2139, 1596, 334),]
+train.delete.numeric = train.delete
+train.delete.numeric$neighbourhood_cleansed = as.numeric(as.factor(train.delete.numeric$neighbourhood_cleansed))
+train.delete.numeric$room_type = as.numeric(as.factor(train.delete.numeric$room_type))
+```
+
+
+\newpage
+##Model analysis with all predictors
+#Full linear model (base instance)
+```{r}
+full_lm = lm(price ~ ., data = train)
+full_lm.ypred = predict(full_lm, train)
+full_lm.mse = mean((full_lm.ypred - train$price)^2)
+sqrt(full_lm.mse)
+summary(full_lm)
+```
+
+#Full linear model with influential points removed
+```{r}
+full_lm.rem = lm(price ~ ., data = train.delete)
+full_lm.rem.ypred = predict(full_lm.rem, train.delete)
+full_lm.rem.mse = mean((full_lm.rem.ypred - train.delete$price)^2)
+sqrt(full_lm.rem.mse)
+summary(full_lm.rem)
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(full_lm.rem)
+```
+
+#GLM with log link
+```{r}
+#Full dataset
+log_glm = glm(price ~ ., data = train, family = gaussian(link="log"))
+log_glm.ypred <- predict(log_glm, train, type = "response")
+log_glm.mse = mean((log_glm.ypred - train$price)^2)
+paste0("GLM with log link RMSE: ", round(sqrt(log_glm.mse),2))
+
+#Deleted 4 influential points
+log_glmm4 = glm(price ~ ., data = train.delete, family = gaussian(link="log"))
+log_glm.ypredm4 <- predict(log_glm, train.delete, type = "response")
+log_glm.msem4 = mean((log_glm.ypredm4 - train.delete$price)^2)
+paste0("GLM with log link RMSE (-4): ", round(sqrt(log_glm.msem4),2))
+```
+
+```{r}
+par(mfrow=c(2,2))
+plot(log_glm)
+summary(log_glm)
+```
+
+
+#Ridge and lasso regression (all predictors) w/CV
+```{r}
+set.seed(1)
+x = model.matrix(price ~ ., data = train)[,-1] 
+y = train$price
+
+#all data points
+ridge.cv = cv.glmnet(x,y,alpha=0)
+best.ridge.lambda = ridge.cv$lambda.min
+ridge_model = glmnet(x, y, alpha=0, lambda = best.ridge.lambda)
+ridge.ypred = predict(ridge_model, newx = x, lambda = best.ridge.lambda)
+ridge.mse = mean((ridge.ypred - y)^2)
+paste0("Full ridge RSME: ", round(sqrt(ridge.mse), 2))
+
+lasso.cv = cv.glmnet(x,y,alpha=1)
+best.lasso.lambda = lasso.cv$lambda.min
+lasso_model = glmnet(x, y, alpha=1, lambda = best.lasso.lambda)
+lasso.ypred = predict(lasso_model, newx = x, lambda = best.lasso.lambda)
+lasso.mse = mean((lasso.ypred - y)^2)
+paste0("Full lasso RSME: ", round(sqrt(lasso.mse), 2))
+
+
+#deleted 4 influential points
+xm4 = model.matrix(price ~ ., data = train)[-c(635, 2139, 1596, 334),-1]
+ym4 = y[-c(635, 2139, 1596, 334)]
+
+ridge.cvm4 = cv.glmnet(xm4,ym4,alpha=0)
+best.ridge.lambdam4 = ridge.cvm4$lambda.min
+ridge_modelm4 = glmnet(xm4, ym4, alpha=0, lambda = best.ridge.lambdam4)
+ridge.ypredm4 = predict(ridge_modelm4, newx = xm4, lambda = best.ridge.lambdam4)
+ridge.msem4 = mean((ridge.ypredm4 - ym4)^2)
+paste0("Full ridge RSME (-4): ", round(sqrt(ridge.msem4), 2))
+
+lasso.cvm4 = cv.glmnet(xm4,ym4,alpha=1)
+best.lasso.lambdam4 = lasso.cvm4$lambda.min
+lasso_modelm4 = glmnet(xm4, ym4, alpha=1, lambda = best.lasso.lambdam4)
+lasso.ypredm4 = predict(lasso_modelm4, newx = xm4, lambda = best.lasso.lambdam4)
+lasso.msem4 = mean((lasso.ypredm4 - ym4)^2)
+paste0("Full lasso RSME (-4): ", round(sqrt(lasso.msem4), 2))
+
+```
+
+
+#Decision tree
+```{r}
+set.seed(1)
+#Full dataset
+tree_model = tree(price ~ ., data = train.numeric)
+tree_model.ypred = predict(tree_model, train.numeric)
+tree.mse = mean((tree_model.ypred - train.numeric$price)^2)
+paste0("Full tree RSME: ", round(sqrt(tree.mse), 2))
+
+plot(tree_model)
+text(tree_model, cex=0.8)
+
+#Deleted 4 influential points
+tree_modelm4 = tree(price ~ ., data = train.delete.numeric)
+tree_model.ypredm4 = predict(tree_modelm4, train.delete.numeric)
+tree.msem4 = mean((tree_model.ypredm4 - train.delete.numeric$price)^2)
+paste0("Full tree RSME (-4): ", round(sqrt(tree.msem4), 2))
+
+plot(tree_modelm4)
+text(tree_modelm4, cex=0.8)
+
+```
+
+
+#Pruned tree with CV
+```{r}
+cv.airbnb = cv.tree(tree_model)
+plot(cv.airbnb$size, cv.airbnb$dev, type = "b")
+which.min(cv.airbnb$dev)
+pruned.tree_model = prune.tree(tree_model, best = 6)
+plot(pruned.tree_model)
+text(pruned.tree_model)
+
+pruned.tree.ypred = predict(pruned.tree_model, train.numeric)
+pruned.mse = mean((pruned.tree.ypred - train.numeric$price)^2)
+paste0("Pruned tree RSME: ", round(sqrt(pruned.mse), 2))
+```
+
+
+#Random forest
+```{r}
+set.seed(1)
+
+#Full dataset
+rf_model = randomForest(price ~ ., data = train.numeric, importance=TRUE)
+rf.ypred = predict(rf_model, train.numeric)
+rf.mse = mean((rf.ypred - train.numeric$price)^2)
+paste0("Random Forest RMSE: ", round(sqrt(rf.mse),2))
+
+print(rf_model)
+varImpPlot(rf_model)
+importance(rf_model)
+
+
+#Deleted observations
+rf_modelm4 = randomForest(price ~ ., data = train.delete.numeric, importance=TRUE)
+rf.ypredm4 = predict(rf_modelm4, train.delete.numeric)
+rf.msem4 = mean((rf.ypredm4 - train.delete.numeric$price)^2)
+paste0("Random Forest RMSE (-4): ", round(sqrt(rf.msem4),2))
+
+print(rf_modelm4)
+varImpPlot(rf_modelm4)
+importance(rf_modelm4)
+```
+
+
+\newpage
+##Model analysis with subset of predictors
+#Subset selection to obtain most significant variables
+```{r}
+#Full dataset
+regfit.forward = regsubsets(price ~ ., data = train, nvmax = 32, method = "forward")
+reg.summary = summary(regfit.forward)
+reg.summary
+plot(reg.summary$rss , xlab = "Number of Variables", ylab = "RSS", type = "l")
+plot(reg.summary$adjr2 , xlab = "Number of Variables", ylab = " Adjusted RSq", type = "l")
+which.max(reg.summary$adjr2) #adj r2 maximized with 17 predictors
+coef(regfit.forward, 17)
+
+#Deleted 4 influential points
+regfit.forwardm4 = regsubsets(price ~ ., data = train.delete, nvmax = 32, method = "forward")
+reg.summarym4 = summary(regfit.forwardm4)
+plot(reg.summarym4$rss , xlab = "Number of Variables", ylab = "RSS", type = "l")
+plot(reg.summarym4$adjr2 , xlab = "Number of Variables", ylab = " Adjusted RSq", type = "l")
+which.max(reg.summarym4$adjr2) #adj r2 maximized with 23 predictors
+coef(regfit.forwardm4, 23)
+```
+
+
+#Linear model (subset)
+```{r}
+#Full dataset
+part_lm = lm(price ~ neighbourhood_cleansed + room_type + bathrooms + bedrooms + number_of_reviews + accommodates + availability_365 + review_scores_cleanliness + review_scores_location + host_is_superhost + instant_bookable + host_identity_verified + dist_to_downtown, data = train)
+part_lm.ypred = predict(part_lm, train)
+part_lm.mse = mean((part_lm.ypred - train$price)^2)
+paste0("Partial linear model RMSE: ", round(sqrt(part_lm.mse),2))
+
+#Deleted 4 points
+part_lmm4 = lm(price ~ neighbourhood_cleansed + room_type + bathrooms + bedrooms + number_of_reviews + accommodates + availability_365 + review_scores_cleanliness + review_scores_location + host_is_superhost + instant_bookable + host_identity_verified + dist_to_downtown, data = train.delete)
+part_lm.ypredm4 = predict(part_lmm4, train.delete)
+part_lm.msem4 = mean((part_lm.ypredm4 - train.delete$price)^2)
+paste0("Partial linear model RMSE (-4): ", round(sqrt(part_lm.msem4),2))
+```
+
+
+#GLM with log link (subset)
+```{r}
+log_part_glm = glm(price ~ neighbourhood_cleansed + room_type + bathrooms + bedrooms + number_of_reviews + accommodates + availability_365 + review_scores_cleanliness + review_scores_location + host_is_superhost + instant_bookable + host_identity_verified + dist_to_downtown, data = train, family = gaussian(link="log"))
+log_part_glm.ypred <- predict(log_part_glm, train, type = "response")
+log_part_glm.mse = mean((log_part_glm.ypred - train$price)^2)
+paste0("Partial GLM with log link RMSE: ", round(sqrt(log_part_glm.mse),2))
+
+#Deleted 4 influential points
+log_part_glmm4 = glm(price ~ neighbourhood_cleansed + room_type + bathrooms + bedrooms + number_of_reviews + accommodates + availability_365 + review_scores_cleanliness + review_scores_location + host_is_superhost + instant_bookable + host_identity_verified + dist_to_downtown, data = train.delete, family = gaussian(link="log"))
+log_part_glm.ypredm4 <- predict(log_part_glm, train.delete, type = "response")
+log_part_glm.msem4 = mean((log_part_glm.ypredm4 - train.delete$price)^2)
+paste0("Partial GLM with log link RMSE (-4): ", round(sqrt(log_part_glm.msem4),2))
+```
+
+
+#Ridge and lasso regression (subset) w/CV
+```{r}
+set.seed(1)
+#Full dataset
+x2 = model.matrix(price ~ neighbourhood_cleansed + room_type + bathrooms + bedrooms + number_of_reviews + accommodates + availability_365 + review_scores_cleanliness + review_scores_location + host_is_superhost + instant_bookable + host_identity_verified + dist_to_downtown, data = train)[,-1] 
+
+part_ridge.cv = cv.glmnet(x2,y,alpha=0)
+part_best.ridge.lambda = part_ridge.cv$lambda.min
+part_ridge_model = glmnet(x2, y, alpha=0, lambda = part_best.ridge.lambda)
+part_ridge.ypred = predict(part_ridge_model, newx = x2, lambda = part_best.ridge.lambda)
+part_ridge.mse = mean((part_ridge.ypred - y)^2)
+paste0("Partial ridge RSME: ", round(sqrt(part_ridge.mse), 2))
+
+part_lasso.cv = cv.glmnet(x2,y,alpha=1)
+part_best.lasso.lambda = part_lasso.cv$lambda.min
+part_lasso_model = glmnet(x2, y, alpha=1, lambda = part_best.lasso.lambda)
+part_lasso.ypred = predict(part_lasso_model, newx = x2, lambda = part_best.lasso.lambda)
+part_lasso.mse = mean((part_lasso.ypred - y)^2)
+paste0("Partial lasso RSME: ", round(sqrt(part_lasso.mse), 2))
+
+#4 influential points removed
+x2m4 = model.matrix(price ~ neighbourhood_cleansed + room_type + bathrooms + bedrooms + number_of_reviews + accommodates + availability_365 + review_scores_cleanliness + review_scores_location + host_is_superhost + instant_bookable + host_identity_verified + dist_to_downtown, data = train.delete)[,-1] 
+
+part_ridge.cvm4 = cv.glmnet(x2m4,ym4,alpha=0)
+part_best.ridge.lambdam4 = part_ridge.cvm4$lambda.min
+part_ridge_modelm4 = glmnet(x2m4, ym4, alpha=0, lambda = part_best.ridge.lambdam4)
+part_ridge.ypredm4 = predict(part_ridge_modelm4, newx = x2m4, lambda = part_best.ridge.lambdam4)
+part_ridge.msem4 = mean((part_ridge.ypredm4 - ym4)^2)
+paste0("Partial ridge RSME (-4): ", round(sqrt(part_ridge.msem4), 2))
+
+part_lasso.cvm4 = cv.glmnet(x2m4,ym4,alpha=1)
+part_best.lasso.lambdam4 = part_lasso.cvm4$lambda.min
+part_lasso_modelm4 = glmnet(x2m4, ym4, alpha=1, lambda = part_best.lasso.lambdam4)
+part_lasso.ypredm4 = predict(part_lasso_modelm4, newx = x2m4, lambda = part_best.lasso.lambdam4)
+part_lasso.msem4 = mean((part_lasso.ypredm4 - ym4)^2)
+paste0("Partial lasso RSME (-4): ", round(sqrt(part_lasso.msem4), 2))
+```
+
+\newpage
+##Predictions of best model (RF)
+```{r}
+test_preds = predict(rf_model, test)
+predictions = data.frame(id = test$ID, prediction = test_preds)
+predictions = round(predictions,2)
+write.csv(predictions, "testing_predictions_KWEE_ELIZABETH_ELK204.csv", row.names=FALSE)
+head(predictions)
+```
